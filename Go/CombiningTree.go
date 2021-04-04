@@ -25,23 +25,29 @@ type Node struct {
 	result      int
 	firstValue  int
 	secondValue int
-	release     chan bool
+	// release     chan bool
+	cond sync.Cond
 }
 
-func newNode(myParent Node) Node {
-	n := Node{parent: &myParent}
+func newNode(myParent *Node) Node {
+	n := Node{parent: myParent}
 	n.cStatus = IDLE
 	n.locked = false
 	n.result = 0
 	n.firstValue = 0
 	n.secondValue = 0
-	n.release = make(chan bool)
+	// n.release = make(chan bool)
+	n.cond = sync.Cond{}
+	n.cond.L = &sync.Mutex{}
 	return n
 }
 
-func precombine(node Node) bool {
-	if node.locked {
-		<-node.release
+func (node *Node) precombine() bool {
+	node.cond.L.Lock()
+	defer node.cond.L.Unlock()
+	for node.locked {
+		// <-node.release
+		node.cond.Wait()
 	}
 	switch node.cStatus {
 	case IDLE:
@@ -54,14 +60,17 @@ func precombine(node Node) bool {
 	case ROOT:
 		return false
 	default:
-		println("unexpected Node state in precombine")
+		fmt.Println("unexpected Node state in precombine", node.cStatus)
 		return false // error
 	}
 }
 
-func combine(combined int, node Node) int {
-	if node.locked {
-		<-node.release
+func (node *Node) combine(combined int) int {
+	node.cond.L.Lock()
+	defer node.cond.L.Unlock()
+	for node.locked {
+		// <-node.release
+		node.cond.Wait()
 	}
 	node.locked = true
 	node.firstValue = combined
@@ -71,13 +80,15 @@ func combine(combined int, node Node) int {
 	case SECOND:
 		return node.firstValue + node.secondValue
 	default:
-		println("unexpected Node state in combine")
+		fmt.Println("unexpected Node state in combine", node.cStatus)
 		return -1 // error
 
 	}
 }
 
-func op(combined int, node Node) int {
+func (node *Node) op(combined int) int {
+	node.cond.L.Lock()
+	defer node.cond.L.Unlock()
 	switch node.cStatus {
 	case ROOT:
 		prior := node.result
@@ -86,79 +97,93 @@ func op(combined int, node Node) int {
 	case SECOND:
 		node.secondValue = combined
 		node.locked = false
-		node.release <- true // wake up waiting threads
-		if node.cStatus != RESULT {
-			<-node.release
+		// node.release <- true // wake up waiting threads
+		node.cond.Broadcast()
+		for node.cStatus != RESULT {
+			// <-node.release
+			node.cond.Wait()
 		}
 		node.locked = false
-		node.release <- true
+		// node.release <- true
+		node.cond.Broadcast()
 		node.cStatus = IDLE
 		return node.result
 	default:
-		println("unexpected Node state in op")
+		fmt.Println("unexpected Node state in op", node.cStatus)
 		return -1 // error
 
 	}
 }
 
-func distribute(prior int, node Node) {
+func (node *Node) distribute(prior int) {
+	node.cond.L.Lock()
+	defer node.cond.L.Unlock()
 	switch node.cStatus {
 	case FIRST:
 		node.cStatus = IDLE
 		node.locked = false
-		break
 	case SECOND:
 		node.result = prior + node.firstValue
 		node.cStatus = RESULT
-		break
 	default:
-		println("unexpected Node state in distribute")
+		fmt.Println("unexpected Node state in distribute", node.cStatus)
 	}
-	node.release <- true
+	// node.release <- true //
+	node.cond.Broadcast()
 }
 
 type CombinningTree struct {
 	nodes []Node
-	leaf  []Node
+	leaf  []*Node
 }
 
 func newTree(width int) CombinningTree {
 
 	tree := CombinningTree{}
 	tree.nodes = make([]Node, 2*width-1)
-	tree.leaf = make([]Node, width)
-
+	tree.leaf = make([]*Node, width)
 	length := 2*width - 1
-	tree.nodes[0] = newNode(Node{parent: nil, cStatus: ROOT})
-	for i := 1; i < length; i++ {
-		tree.nodes[i] = newNode(tree.nodes[(i-1)/2])
+	tree.nodes[0] = Node{
+		parent:      nil,
+		cStatus:     ROOT,
+		locked:      false,
+		result:      0,
+		firstValue:  0,
+		secondValue: 0,
+		// release:     make(chan bool),
+		cond: sync.Cond{},
 	}
-	for i := 1; i < width; i++ {
-		tree.leaf[i] = tree.nodes[length-i-1]
+	tree.nodes[0].cond.L = &sync.Mutex{}
+	for i := 1; i < length; i++ {
+		tree.nodes[i] = newNode(&tree.nodes[(i-1)/2])
+	}
+	for i := 0; i < width; i++ {
+		tree.leaf[i] = &tree.nodes[length-i-1]
 	}
 	return tree
 }
 
-func getAndIncrement(tree CombinningTree, id int) int {
+func (tree *CombinningTree) getAndIncrement(id int) int {
 	stack := list.New()
 	myLeaf := tree.leaf[id%len(tree.leaf)]
-	println(id, len(tree.leaf))
 	node := myLeaf
-	for node.parent != nil && precombine(node) {
-		node = *node.parent
+	for node.precombine() {
+		// fmt.Println("Goroutine ", id, " visit ", node)
+		node = node.parent
 	}
 	stop := node
 	combined := 1
-	for node = myLeaf; node != stop; node = *node.parent {
-		combined = combine(combined, node)
+	for node = myLeaf; node != stop; node = node.parent {
+		combined = node.combine(combined)
 		stack.PushBack(node)
 	}
-
-	prior := op(combined, stop)
+	prior := stop.op(combined)
 	for stack.Len() > 0 {
-
-		node = stack.Remove(stack.Back()).(Node)
-		distribute(prior, node)
+		node = stack.Remove(stack.Back()).(*Node)
+		node.distribute(prior)
+		// if node.cStatus == RESULT {
+		// 	fmt.Println("result: ", node.result)
+		// }
 	}
 	return prior
 
@@ -183,17 +208,20 @@ func main() {
 	for index := 0; index < TH; index++ {
 		wg.Add(1)
 		go func(id int) {
+			defer wg.Done()
+			s := time.Now()
 			for i := 0; i < NUM; i++ {
-				getAndIncrement(tree, id)
+				tree.getAndIncrement(id)
 			}
+			e := time.Now()
+			fmt.Println(id, "done in", e.Sub(s))
 		}(index)
 	}
-
 	wg.Wait()
 	stop := time.Now()
 	diff := stop.Sub(start)
 	print("Total: ")
 	print(tree.nodes[0].result)
-	fmt.Println("\nTotal time: ", diff)
+	fmt.Println("\nTotal time:", diff)
 
 }
