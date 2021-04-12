@@ -1,7 +1,0 @@
-E:\McMaster\766 - concurrent system design\gitlab\zhuopeng-zhang\C#\CombiningTree\CombiningTree\bin\Debug\CombiningTree.exe.config
-E:\McMaster\766 - concurrent system design\gitlab\zhuopeng-zhang\C#\CombiningTree\CombiningTree\bin\Debug\CombiningTree.exe
-E:\McMaster\766 - concurrent system design\gitlab\zhuopeng-zhang\C#\CombiningTree\CombiningTree\bin\Debug\CombiningTree.pdb
-E:\McMaster\766 - concurrent system design\gitlab\zhuopeng-zhang\C#\CombiningTree\CombiningTree\obj\Debug\CombiningTree.csproj.CoreCompileInputs.cache
-E:\McMaster\766 - concurrent system design\gitlab\zhuopeng-zhang\C#\CombiningTree\CombiningTree\obj\Debug\CombiningTree.exe
-E:\McMaster\766 - concurrent system design\gitlab\zhuopeng-zhang\C#\CombiningTree\CombiningTree\obj\Debug\CombiningTree.pdb
-E:\McMaster\766 - concurrent system design\gitlab\zhuopeng-zhang\C#\CombiningTree\CombiningTree\obj\Debug\CombiningTree.csprojAssemblyReference.cache
